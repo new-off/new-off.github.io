@@ -1,6 +1,6 @@
 **AWS VPC, ALB, Route53, ACM 모듈화 Terraform 구성 가이드**
 
-Terraform을 사용해 AWS 인프라를 모듈화하여 손쉽게 관리하는 과정을 다뤄보려고 합니다. 이번 글에서는 AWS VPC, Application Load Balancer(ALB), Route53, ACM을 Terraform으로 모듈화하고 설치하는 과정까지 차근차근 설명해볼게요. 각 단계별로 모듈화하는 방법과 설정, 그리고 실제 인프라 구성에 대한 팁을 소개합니다.
+Terraform을 사용해 AWS 인프라를 모듈화하여 손쉽게 관리하는 과정을 다뤄보려고 합니다. 이번 글에서는 AWS VPC, Application Load Balancer(ALB), Route53, ACM을 Terraform으로 모듈화하고 설치하는 과정까지 차근차근 설명해볼게요. 각 단계별로 모듈화하는 방법과 설정, 그리고 실제 인프라 구성에 대한 팁을 소개합니다. 추후 뉴오프에 입사하게 될 동료분들께 도움이 되었으면 좋겠습니다.
 
 뉴오프는 현재 도메인만 있고 인프라가 아무것도 없는 백지상태 입니다. 그 기준으로 작성된 글이기에 여타 다른 세팅방식과 약간의 차이가 존재할 수 있습니다. 
 
@@ -8,26 +8,32 @@ Terraform을 사용해 AWS 인프라를 모듈화하여 손쉽게 관리하는 �
 
 먼저 AWS CloudShell에서 Terraform을 설치하는 과정부터 시작합니다. CloudShell을 사용하면 별도의 인프라 설정 없이 AWS 내에서 바로 사용할 수 있어 편리합니다.
 
-물론 세션이 끊기면 설치된 Terraform이 초기화 되기 때문에 개인적으로는 그렇게 추천하지는 않습니다. 스토리지도 1G 제한이 있기도하고요. 그럼에도 선택한 이유는 로컬에서 이미 AWS Config가 다른 계정으로 세팅되어있기도 했고 Cloud9을 사용하려고 보니 Deprecated되서 CloudShell을 한번 사용해보았습니다.  
+물론 세션이 종료되면 설치된 Terraform이 초기화되기 때문에 개인적으로는 추천하지 않습니다. 또한 스토리지 용량에도 1GB 제한이 있습니다. 그럼에도 CloudShell을 선택한 이유는, 로컬 환경의 AWS Config가 다른 계정으로 설정되어 있었고, Cloud9이 Deprecated 되어 CloudShell을 사용하라는 추천 메시지가 떴기 때문입니다. 그래서 의식의 흐름대로 AWS CloudShell을 사용해 보았습니다.
 
 ```bash
-# Terraform 설치
-cur사l -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
-sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
-sudo apt-get update && sudo apt-get install terraform
+# 패키지 설치 업데이트 및 필요한 도구 설치
+sudo yum update -y
+sudo yum install -y yum-utils
 
-# 설치 확인
+# HashiCorp 리포지토리 추가
+sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+
+# yum을 통해 테라폼을 설치
+sudo yum install -y terraform
+
+# 테라폼 설치 확인
 terraform -v
 ```
 
-CloudShell에서 위 명령어를 실행하여 Terraform을 설치하고, 버전이 잘 표시되는지 확인합니다.
+CloudShell에서 위 명령어를 실행하여 Terraform을 설치한 후, 버전이 올바르게 표시되는지 확인합니다. 단, CloudShell은 세션이 종료되면 설치된 환경이 초기화되므로 다시 설치해야 하는 번거로움이 있습니다. 소스 설치를 통해 휘발되지 않는 홈 디렉토리에 Terraform을 위치시키는 것도 하나의 방법이지만, 그보다는 로컬 환경에서 사용하는 것이 더 나을 것입니다.
+
 
 ### 2. 프로젝트 구조 설정
 
 Terraform 프로젝트는 각 리소스를 모듈화하여 재사용성을 높이고, 유지보수를 쉽게 할 수 있도록 구조화합니다. 프로젝트 폴더는 아래와 같은 구조를 가지도록 설정합니다.
 
 ```
-my-terraform-project/
+newoff/
   |- main.tf
   |- variables.tf
   |- outputs.tf
@@ -55,6 +61,8 @@ my-terraform-project/
 ### 3. VPC 모듈화
 
 VPC 모듈은 네트워크 리소스를 정의하는 핵심 모듈입니다. VPC, 서브넷, 라우팅 테이블, 인터넷 게이트웨이 등을 포함합니다.
+저희의 경우는 Dev Network와, Production Network를 분리해서 사용하고 있습니다. 그래서 2개의 VPC가 필요하고 서브넷은 private,public 각각 2개의 가용영역을 사용하고 있습니다. Nat Gateway도 2개로 개발/운영이 분리되어있고, EIP도 그에따라 별도로 운영중입니다. 
+VPC Endpoint는 우선 S3만 설정해 두었습니다.
 
 `modules/vpc/main.tf`:
 
