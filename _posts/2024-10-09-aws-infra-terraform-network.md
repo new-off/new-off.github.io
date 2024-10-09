@@ -60,33 +60,211 @@ newoff/
 
 ### 3. VPC 모듈화
 
-VPC 모듈은 네트워크 리소스를 정의하는 핵심 모듈입니다. VPC, 서브넷, 라우팅 테이블, 인터넷 게이트웨이 등을 포함합니다.
-저희의 경우는 Dev Network와, Production Network를 분리해서 사용하고 있습니다. 그래서 2개의 VPC가 필요하고 서브넷은 private,public 각각 2개의 가용영역을 사용하고 있습니다. Nat Gateway도 2개로 개발/운영이 분리되어있고, EIP도 그에따라 별도로 운영중입니다. 
-VPC Endpoint는 우선 S3만 설정해 두었습니다.
+VPC 모듈은 네트워크 리소스를 정의하는 핵심 모듈입니다. 여기에는 VPC, 서브넷, 라우팅 테이블, 인터넷 게이트웨이 등이 포함됩니다. 저희는 Dev Network와 Production Network를 분리하여 사용하고 있으며, 이를 위해 2개의 VPC를 생성했습니다. 서브넷은 각각 프라이빗과 퍼블릭으로 나누어 2개의 가용영역에 배치하였고, NAT 게이트웨이도 개발/운영용으로 각각 두 개를 설정하여 EIP 역시 별도로 관리하고 있습니다. 현재는 VPC 엔드포인트로 S3만 설정한 상태입니다.
 
 `modules/vpc/main.tf`:
 
 ```hcl
+# VPC 리소스 생성
 resource "aws_vpc" "main" {
   cidr_block = var.vpc_cidr_block
+
   tags = {
     Name = var.vpc_name
   }
 }
 
-# 퍼블릭 및 프라이빗 서브넷 생성
+# 퍼블릭 서브넷 생성
 resource "aws_subnet" "public" {
-  count = length(var.public_subnets)
-  vpc_id = aws_vpc.main.id
-  cidr_block = var.public_subnets[count.index].cidr_block
+  count             = length(var.public_subnets)
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = var.public_subnets[count.index].cidr_block
   availability_zone = var.public_subnets[count.index].availability_zone
+
   tags = {
-    Name = "${var.vpc_name}-public-subnet-${count.index + 1}"
+    Name = "${var.vpc_name}-public-subnet-${var.public_subnets[count.index].availability_zone_name}"
+  }
+}
+
+# 프라이빗 서브넷 생성
+resource "aws_subnet" "private" {
+  count             = length(var.private_subnets)
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = var.private_subnets[count.index].cidr_block
+  availability_zone = var.private_subnets[count.index].availability_zone
+
+  tags = {
+    Name = "${var.vpc_name}-private-subnet-${var.private_subnets[count.index].availability_zone_name}"
+  }
+}
+
+# 인터넷 게이트웨이 생성
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.vpc_name}-igw"
+  }
+}
+
+# 기본 라우팅 테이블 생성
+resource "aws_route_table" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.vpc_name}-default-rtb"
+  }
+}
+
+# 기본 라우팅 테이블을 VPC의 기본으로 설정
+resource "aws_main_route_table_association" "main_rt_assoc" {
+  vpc_id         = aws_vpc.main.id
+  route_table_id = aws_route_table.default.id
+}
+
+# 퍼블릭 라우팅 테이블 생성
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name = "${var.vpc_name}-public-rt"
+  }
+}
+
+# 프라이빗 라우팅 테이블 생성
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_nat_gateway.main.id
+  }
+
+  tags = {
+    Name = "${var.vpc_name}-private-rt"
+  }
+}
+
+# 퍼블릭 서브넷과 퍼블릭 라우팅 테이블 연결
+resource "aws_route_table_association" "public_association" {
+  count         = length(var.public_subnets)
+  subnet_id     = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+# 프라이빗 서브넷과 프라이빗 라우팅 테이블 연결
+resource "aws_route_table_association" "private_association" {
+  count         = length(var.private_subnets)
+  subnet_id     = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private.id
+}
+
+# NAT 게이트웨이 생성
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.main.id
+  subnet_id     = aws_subnet.public[0].id
+
+  tags = {
+    Name = "${var.vpc_name}-nat-gw"
+  }
+}
+
+# Elastic IP 생성 (NAT 게이트웨이용)
+resource "aws_eip" "main" {
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.vpc_name}-nat-eip"
+  }
+}
+
+# S3 VPC 엔드포인트 생성
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id       = aws_vpc.main.id
+  service_name = "com.amazonaws.${var.aws_region}.s3"
+
+  route_table_ids = [
+    aws_route_table.public.id,
+    aws_route_table.private.id
+  ]
+
+  tags = {
+    Name = "${var.vpc_name}-s3-endpoint"
   }
 }
 ```
 
+`modules/vpc/outputs.tf`:
+```
+# VPC ID 출력
+output "vpc_id" {
+  description = "VPC의 ID"
+  value       = aws_vpc.main.id
+}
+
+# 퍼블릭 서브넷 IDs 출력
+output "public_subnet_ids" {
+  description = "퍼블릭 서브넷의 IDs"
+  value       = aws_subnet.public[*].id
+}
+
+# 프라이빗 서브넷 IDs 출력
+output "private_subnet_ids" {
+  description = "프라이빗 서브넷의 IDs"
+  value       = aws_subnet.private[*].id
+}
+```
+
+`modules/vpc/variables.tf`:
+```
+# VPC CIDR 블록 변수
+variable "vpc_cidr_block" {
+  description = "VPC의 CIDR 블록 범위 지정"
+  type        = string
+}
+
+# VPC 이름 변수
+variable "vpc_name" {
+  description = "VPC의 이름 지정"
+  type        = string
+}
+
+# 퍼블릭 서브넷 정보 변수
+variable "public_subnets" {
+  description = "퍼블릭 서브넷의 CIDR 블록 및 가용 영역 정보"
+  type = list(object({
+    cidr_block        = string
+    availability_zone = string
+    availability_zone_name = string
+  }))
+}
+
+# 프라이빗 서브넷 정보 변수
+variable "private_subnets" {
+  description = "프라이빗 서브넷의 CIDR 블록 및 가용 영역 정보"
+  type = list(object({
+    cidr_block        = string
+    availability_zone = string
+    availability_zone_name = string
+  }))
+}
+
+# AWS 리전 변수 (모듈에서 S3 엔드포인트 생성에 필요)
+variable "aws_region" {
+  description = "AWS 리전 (예: ap-northeast-2)"
+  type        = string
+}
+```
+
 VPC와 서브넷을 각각 생성하고, 각 리소스에 대해 이름 태그를 설정합니다. 이 모듈은 VPC 이름, CIDR 블록, 서브넷 설정 등을 변수로 받아 유연하게 사용할 수 있습니다.
+
+라우팅 테이블을 생성하고 서브넷에 연결한 후, NAT 게이트웨이와 EIP, 그리고 S3 VPC 엔드포인트까지 순차적으로 생성합니다.
+
 
 ### 4. ALB 모듈화
 
