@@ -1,133 +1,15 @@
-# Rain
+# New-ff
 
-Rain is a simple and clean Jekyll theme with focus on content. It's a fork of [Tale theme](https://github.com/chesterhow/tale) with additional customizations.
+안녕하세요! 저희 **뉴오프 기술 블로그**에 오신 것을 환영합니다.
 
-![](https://github.com/inelaah/rain/blob/master/images/screenshot.png)
-
-## Features
-- Compatible with GitHub Pages
-- Responsive design
-- Syntax highlighting
-- Markdown and HTML text formatting
-- Pagination of posts
-- Related articles section
-- Links to social media
+이 블로그는 저희가 배우고 경험한 다양한 기술 이야기들을 공유하는 공간입니다. 소프트웨어 개발, 인프라 관리, 협업 등 여러 주제를 다루며, 저희가 실제로 겪은 문제와 해결 방법, 그리고 그 과정에서 배운 것들을 기록하고자 합니다. 이를 통해 비슷한 문제를 해결하려는 분들에게 도움이 되기를 바랍니다.
 
 
-## Getting Started
+## 시작하기
 
-You will need to install Jekyll on your machine. Installation depends on your operating system and it is explained [here](https://jekyllrb.com/docs/installation/).
+블로그의 첫 번째 글에서는 AWS 인프라를 Terraform으로 모듈화하여 관리하는 방법을 다룹니다. AWS VPC, ALB, Route 53, ACM을 설정하는 과정을 단계별로 설명하며, 초기 설정부터 실전 인프라 구성 팁까지 포함되어 있습니다.
 
-Then create a new directory and clone this repository:
-
-```bash
-mkdir rain
-cd rain
-git clone https://github.com/inelaah/rain.git
-```
-
-Install all dependencies:
-
-```bash
-bundle install
-```
-
-## Site Configuration
-
-There is a configuration file `_config.yml` in root directory. You should overwrite it to fit to your needs.
-
-An example of `_config.yml` looks like this:
-
-```bash
-# Site settings
-title:          Rain
-description:    "Rain is a simple and clean Jekyll theme with focus on content."
-url:            https://github.com/inelaah/rain
-
-# Author
-author:
-  name:         Inela Avdic Hukic
-  email:        inelaah@gmail.com
-  url:          https://inelaah.com
-
-# Build settings
-markdown:       kramdown
-
-# Assets
-sass:
-  sass_dir:     _sass
-  style:        compressed
-
-# Gems
-plugins:
-  - jekyll-feed
-  - jekyll-paginate
-  # - jemoji #Uncomment this to allow emoji in your post
-
-# Permalinks
-permalink:      /:year-:month-:day/:title
-paginate:       5
-
-# Related posts settings
-related_posts_section:
-  max_count:        5
-  min_common_tags:  2
-
-# Links to social media
-social:
-  email: inelaah@gmail.com
-  github: https://github.com/inelaah
-  twitter: https://twitter.com
-  linkedin: https://ba.linkedin.com/in/inela-avdic-hukic-322354131
-```
-
-## Favicons
-
-It is recommended to put your own favicons:
-
-- `apple-touch-icon.png` (180x180)
-- `favicon-32x32.png` (32x32)
-- `favicon-16x16.png` (16x16)
-- `mstile-150x150.png` (150x150)
-- `android-chrome-192x192.png` (192x192)
-- `android-chrome-512x512.png` (512x512)
-
-in `/assets` directory. They're easily created via [Favicon Generator](https://realfavicongenerator.net/).
+현재 뉴오프는 도메인만 있는 백지 상태의 인프라를 가지고 있으며, 이 블로그에서는 그러한 초기 상태를 기준으로 인프라 구축 과정을 설명합니다. 따라서 다른 환경과는 약간의 차이가 있을 수 있음을 참고해 주세요.
 
 
-## Related Articles
-
-Related articles section is based on article tags. For every post that you want to have this section you should define tags.
-To include related articles in the bottom of the content you should define `related_posts_section` property in configuration file.
-It contains two fields: `max_count` and `min_common_tags`:
-- `max_count` represents the maximum number of related articles shown on a single article.
-- `min_common_tags` represents the minimum number of common tags for two articles to become related articles.
-
-## Links to social media
-
-To include links to social media in the top right corner of your page you need to define `social` property.
-It contains email, GitHub, Twitter and LinkedIn fields. You can leave out any of these if you don't want them to show up on your page.
-
-## Customizing Rain theme
-
-If you want to customize Rain theme you can fork this project and make some changes. If you just want to change the style then you can find Sass files in `_sass/rain` directory.
-
-## Adding your own posts
-
-You can see an example of post structure in `_posts` directory. After you clone this project you should clean the `_posts` directory and add your own posts.
-
-## Build and serve
-
-```
-bundle exec jekyll serve
-```
-
-Head over to http://127.0.0.1:4000/ to see your page.
-
-## License
-
-Rain is licensed under the MIT license. Check the [LICENSE](LICENSE.md) file for details.
-
-## Author
-
-[Inela Avdic Hukic](https://github.com/inelaah)
+감사합니다!
