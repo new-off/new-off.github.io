@@ -200,7 +200,7 @@ resource "aws_vpc_endpoint" "s3" {
 ```
 
 `modules/vpc/outputs.tf`:
-```
+```hcl
 # VPC ID 출력
 output "vpc_id" {
   description = "VPC의 ID"
@@ -221,7 +221,7 @@ output "private_subnet_ids" {
 ```
 
 `modules/vpc/variables.tf`:
-```
+```hcl
 # VPC CIDR 블록 변수
 variable "vpc_cidr_block" {
   description = "VPC의 CIDR 블록 범위 지정"
@@ -265,6 +265,114 @@ VPC와 서브넷을 각각 생성하고, 각 리소스에 대해 이름 태그�
 
 라우팅 테이블을 생성하고 서브넷에 연결한 후, NAT 게이트웨이와 EIP, 그리고 S3 VPC 엔드포인트까지 순차적으로 생성합니다.
 
+`main.tf`:
+```hcl
+# AWS 제공자 설정
+provider "aws" {
+  region = var.aws_region # 리전을 변수로 설정
+}
+
+module "dev_vpc" {
+  source          = "./modules/vpc"
+  vpc_name        = "${var.project_name}-dev"
+  vpc_cidr_block  = "10.0.0.0/16"
+  aws_region      = var.aws_region
+  public_subnets  = [
+    {
+      cidr_block        = "10.0.1.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[0]}"
+      availability_zone_name = var.availability_zones[0]
+    },
+    {
+      cidr_block        = "10.0.3.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[1]}"
+      availability_zone_name = var.availability_zones[1]
+    }
+  ]
+  private_subnets = [
+    {
+      cidr_block        = "10.0.2.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[0]}"
+      availability_zone_name = var.availability_zones[0]
+    },
+    {
+      cidr_block        = "10.0.4.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[1]}"
+      availability_zone_name = var.availability_zones[1]
+    }
+  ]
+}
+
+module "prod_vpc" {
+  source          = "./modules/vpc"
+  vpc_name        = "${var.project_name}-prod"
+  vpc_cidr_block  = "10.1.0.0/16"
+  aws_region      = var.aws_region
+  public_subnets  = [
+    {
+      cidr_block        = "10.1.1.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[0]}"
+      availability_zone_name = var.availability_zones[0]
+    },
+    {
+      cidr_block        = "10.1.3.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[1]}"
+      availability_zone_name = var.availability_zones[1]
+    }
+  ]
+  private_subnets = [
+    {
+      cidr_block        = "10.1.2.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[0]}"
+      availability_zone_name = var.availability_zones[0]
+    },
+    {
+      cidr_block        = "10.1.4.0/24"
+      availability_zone = "${var.aws_region}${var.availability_zones[1]}"
+      availability_zone_name = var.availability_zones[1]
+    }
+  ]
+}
+```
+
+`variables.tf`:
+```hcl
+variable "project_name" {
+  description = "프로젝트 이름 지정"
+  type        = string
+  default     = "newoff"
+}
+
+variable "aws_region" {
+  description = "AWS 리전 (예: ap-northeast-2)"
+  type        = string
+  default     = "ap-northeast-2"
+}
+
+variable "availability_zones" {
+  description = "가용 영역 목록"
+  type        = list(string)
+  default     = ["a", "c"]
+}
+```
+루트 모듈에 **dev_vpc**,**prod_vpc** 를 선언하고 공통으로 사용하는 변수까지 정의 했다면 초기 VPC 설정은 완료입니다.
+모듈 내에서 변수를 받아서 사용해야하기 때문에 variables 선언이 필요하고, 모듈간에 출력내용을 공유해야하는 상황이 있기 때문에 output까지 미리 정의해 두었습니다.
+
+이제 실행 해보도록 하겠습니다.
+```
+terraform init
+```
+모듈이 추가 될때는 init을 해주셔야 합니다.
+초기화가 문제없이 진행되었다면 실행계획을 살펴보도록 합시다.
+```
+terraform plan -target=module.prod_vpc -target=module.dev_vpc
+```
+저 같은 경우는 모듈별로 설치할 예정이기 때문에 target 옵션을 활용하도록 하겠습니다. target 옵션은 [공식 가이드](https://developer.hashicorp.com/terraform/cli/commands/plan)를 참고해보시면 좋습니다. (특히 destroy 사용시에는 target 옵션을 조심히 사용해야 합니다.)
+
+```
+terraform apply -target=module.prod_vpc -target=module.dev_vpc
+```
+실행계획에 문제가 없다면 apply로 설치를 시작합니다. 
 
 ### 4. ALB 모듈화
 
