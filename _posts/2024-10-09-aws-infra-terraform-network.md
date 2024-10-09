@@ -200,6 +200,7 @@ resource "aws_vpc_endpoint" "s3" {
 ```
 
 `modules/vpc/outputs.tf`:
+
 ```hcl
 # VPC ID 출력
 output "vpc_id" {
@@ -221,6 +222,7 @@ output "private_subnet_ids" {
 ```
 
 `modules/vpc/variables.tf`:
+
 ```hcl
 # VPC CIDR 블록 변수
 variable "vpc_cidr_block" {
@@ -266,6 +268,7 @@ VPC와 서브넷을 각각 생성하고, 각 리소스에 대해 이름 태그�
 라우팅 테이블을 생성하고 서브넷에 연결한 후, NAT 게이트웨이와 EIP, 그리고 S3 VPC 엔드포인트까지 순차적으로 생성합니다.
 
 `main.tf`:
+
 ```hcl
 # AWS 제공자 설정
 provider "aws" {
@@ -336,6 +339,7 @@ module "prod_vpc" {
 ```
 
 `variables.tf`:
+
 ```hcl
 variable "project_name" {
   description = "프로젝트 이름 지정"
@@ -353,6 +357,12 @@ variable "availability_zones" {
   description = "가용 영역 목록"
   type        = list(string)
   default     = ["a", "c"]
+}
+
+variable "domain_name" {
+  description = "도메인 이름"
+  type        = string
+  default     = "new-off.com"
 }
 ```
 루트 모듈에 **dev_vpc**,**prod_vpc** 를 선언하고 공통으로 사용하는 변수까지 정의 했다면 초기 VPC 설정은 완료입니다.
@@ -374,26 +384,124 @@ terraform apply -target=module.prod_vpc -target=module.dev_vpc
 ```
 실행계획에 문제가 없다면 apply로 설치를 시작합니다. 
 
+
 ### 4. ALB 모듈화
 
+이번 글에서는 VPC-Route53-ALB-ACM 순서에 따라 진행하기 때문에 Route53 설정후에 ALB 설정을 시작합니다.
 ALB 모듈은 VPC 내에서 트래픽을 분산시키기 위해 Load Balancer를 생성합니다. ALB와 관련된 보안 그룹도 함께 정의합니다.
 
 `modules/alb/main.tf`:
 
 ```hcl
+# ALB 보안 그룹 생성
+resource "aws_security_group" "alb_sg" {
+  name   = "${var.alb_name}-sg"
+  vpc_id = var.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.alb_name}-sg"
+  }
+}
+
+# Application Load Balancer (ALB) 생성
 resource "aws_lb" "main" {
   name               = var.alb_name
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
   subnets            = var.public_subnet_ids
+
   tags = {
     Name = var.alb_name
   }
 }
 ```
 
+`modules/alb/outputs.tf`:
+
+```hcl
+# ALB ID 출력
+output "alb_zone_id" {
+  description = "생성된 ALB의 ID"
+  value       = aws_lb.main.zone_id
+}
+
+# ALB DNS 이름 출력
+output "alb_dns_name" {
+  description = "생성된 ALB의 DNS 이름"
+  value       = aws_lb.main.dns_name
+}
+```
+
+`modules/alb/variables.tf`:
+
+```hcl
+# ALB 이름 변수
+variable "alb_name" {
+  description = "ALB의 이름"
+  type        = string
+}
+
+# VPC ID 변수
+variable "vpc_id" {
+  description = "ALB를 생성할 VPC ID"
+  type        = string
+}
+
+# 퍼블릭 서브넷 ID 목록 변수
+variable "public_subnet_ids" {
+  description = "퍼블릭 서브넷 ID 목록"
+  type        = list(string)
+}
+
+# AWS 리전 변수
+variable "aws_region" {
+  description = "AWS 리전"
+  type        = string
+}
+```
+
 보안 그룹 설정 및 서브넷 연결을 통해 ALB를 생성합니다.
+그리고 Root모듈에 ALB를 선언해줍니다. 
+
+`main.tf`:
+
+```hcl
+# 루트 모듈에서 ALB 모듈을 호출
+module "alb" {
+  source            = "./modules/alb"
+  alb_name          = "${var.project_name}-prod-alb"
+  vpc_id            = module.prod_vpc.vpc_id
+  public_subnet_ids = module.prod_vpc.public_subnet_ids
+  aws_region        = var.aws_region
+}
+```
+
+이제 실행 해보도록 하겠습니다.
+```
+terraform init
+```
+
+모듈이 추가 될때는 init을 해주셔야 한다고 말씀드렸는데요. 저는 단계적인 세팅을 해나가고 있는 도중이라 이런것이고 문제가 없다면 이런 과정들을 반복할 필요가 없습니다.
+초기화가 문제없이 진행되었다면 실행계획/설치를 수행하시면 됩니다.
+```
+terraform plan -target=module.alb
+terraform apply -target=module.alb
+```
 
 ### 5. Route53 모듈화
 
@@ -402,24 +510,142 @@ Route53 모듈은 도메인과 관련된 호스팅 존 및 레코드를 설정�
 `modules/route53/main.tf`:
 
 ```hcl
+# Public Hosted Zone 생성
 resource "aws_route53_zone" "public" {
-  name    = var.domain_name
+  name = var.domain_name
   comment = "Public Hosted Zone for ${var.domain_name}"
 }
 
+# Private Hosted Zone 생성
+resource "aws_route53_zone" "private_zone" {
+  name          = var.domain_name
+  vpc {
+    vpc_id     = var.vpc_ids[0] # 첫 번째 VPC와 연결
+    vpc_region = var.aws_region
+  }
+  vpc {
+    vpc_id     = var.vpc_ids[1] # 두 번째 VPC와 연결
+    vpc_region = var.aws_region
+  }
+  comment       = "Private Hosted Zone for ${var.domain_name}"
+
+  tags = {
+    Name = "${var.domain_name}-private-zone"
+  }
+}
+
+# Route53 A 레코드 생성 (www)
+resource "aws_route53_record" "default-www" {
+  zone_id = aws_route53_zone.public.zone_id
+  name    = var.domain_name
+  type    = "A"
+  alias {
+    name                   = "www.${var.domain_name}"
+    zone_id                = aws_route53_zone.public.zone_id
+    evaluate_target_health = false
+  }
+}
+
+# Route53 A 레코드 생성 (www) - ALB와 연결
 resource "aws_route53_record" "www" {
   zone_id = aws_route53_zone.public.zone_id
   name    = "www.${var.domain_name}"
   type    = "A"
+
   alias {
     name                   = var.alb_dns_name
     zone_id                = var.alb_zone_id
     evaluate_target_health = false
   }
 }
+
+resource "aws_route53_record" "mx_record" {
+  zone_id = aws_route53_zone.public.zone_id
+  name    = var.domain_name
+  type    = "MX"
+  ttl     = 300
+  records = [
+    "10 ASPMX.L.GOOGLE.COM.",
+    "20 ALT1.ASPMX.L.GOOGLE.COM.",
+    "30 ALT2.ASPMX.L.GOOGLE.COM.",
+    "40 ASPMX2.GOOGLEMAIL.COM.",
+    "50 ASPMX3.GOOGLEMAIL.COM."
+  ]
+}
 ```
 
-도메인 네임과 ALB를 연결하여 www 레코드를 설정합니다.
+`modules/route53/outputs.tf`:
+
+```hcl
+output "public_hosted_zone_id" {
+  description = "The ID of the public hosted zone"
+  value       = aws_route53_zone.public.id
+}
+
+output "private_hosted_zone_id" {
+  description = "The ID of the private hosted zone"
+  value       = aws_route53_zone.private_zone.id
+}
+```
+
+`modules/route53/variables.tf`:
+
+```hcl
+variable "domain_name" {
+  description = "The domain name for the Route53 hosted zone"
+  type        = string
+}
+
+# VPC ID 목록 변수
+variable "vpc_ids" {
+  description = "Route53 Hosted Zone에 연결할 VPC ID 목록"
+  type        = list(string)
+}
+
+# AWS 리전 변수 (모듈에서 S3 엔드포인트 생성에 필요)
+variable "aws_region" {
+  description = "AWS 리전 (예: ap-northeast-2)"
+  type        = string
+}
+
+# ALB DNS 이름 변수
+variable "alb_dns_name" {
+  description = "ALB의 DNS 이름"
+  type        = string
+}
+
+# ALB Hosted Zone ID 변수
+variable "alb_zone_id" {
+  description = "ALB의 호스팅 존 ID"
+  type        = string
+}
+```
+백지 상태에서 설정하고 있기 때문에 당연하게도 Route53의 호스트존도 없습니다. 2개의 호스트존을 생성하고 A Record, MX Record 를 설정합니다. MX Record는 필요에 따라 진행하면 되겠습니다.
+저희의 경우에는 www A 레코드를 ALB와 연결해야하기 때문에 alias 설정에 alb 관련 내용이 포함되어있습니다.
+
+Private zone이 사실 고민되는 부분인데 EKS + [istio](https://istio.io/)를 사용할 예정입니다. 클러스터 내부 서비스 간의 통신은 Istio와 Kubernetes 기본 DNS만으로 충분히 처리할 수 있으므로, Route 53 Private Hosted Zone이 반드시 필요하지는 않는데 계획과 달라질수 있어서 우선은 보편적인 형태로 구성했습니다. 
+
+여기까지 되었으면 루트에 모듈을 추가합니다.
+
+`main.tf`:
+
+```hcl
+module "route53" {
+  source       = "./modules/route53"
+  domain_name  = var.domain_name
+  vpc_ids      = [module.dev_vpc.vpc_id, module.prod_vpc.vpc_id]
+  aws_region   = var.aws_region
+  alb_dns_name = module.alb.alb_dns_name
+  alb_zone_id  = module.alb.alb_zone_id
+}
+```
+
+이제 실행 해보도록 하겠습니다.
+```
+terraform init
+terraform plan -target=module.route53
+terraform apply -target=module.route53
+```
 
 ### 6. ACM 모듈화
 
@@ -428,21 +654,28 @@ ACM 모듈은 도메인 검증을 위한 인증서를 생성합니다. Route53 �
 `modules/acm/main.tf`:
 
 ```hcl
+# ACM 인증서 생성
 resource "aws_acm_certificate" "cert" {
   domain_name       = var.domain_name
-  validation_method = "DNS"
-  subject_alternative_names = [
-    "*.${var.domain_name}"
-  ]
+  validation_method = "DNS" # DNS 검증 방식 선택
+
+  # 추가 도메인 등록 (와일드카드 포함)
+  subject_alternative_names = var.alternative_names
+
+  tags = {
+    Name = "${var.domain_name}-certificate"
+  }
 }
 
+# DNS 검증을 위한 Route 53 레코드 생성 (와일드카드가 없는 도메인만)
 resource "aws_route53_record" "cert_validation" {
   for_each = {
-    for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => {
+    for dvo in aws_acm_certificate.cert.domain_validation_options :
+    dvo.domain_name => {
       name   = dvo.resource_record_name
       type   = dvo.resource_record_type
       record = dvo.resource_record_value
-    }
+    } if !startswith(dvo.domain_name, "*.")
   }
 
   zone_id = var.route53_zone_id
@@ -451,67 +684,77 @@ resource "aws_route53_record" "cert_validation" {
   ttl     = 60
   records = [each.value.record]
 }
+
+resource "aws_acm_certificate_validation" "cert_validation" {
+  certificate_arn         = aws_acm_certificate.cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
 ```
 
-### 7. 루트 모듈 설정
+`modules/acm/outputs.tf`:
 
-각 모듈을 루트에서 호출하여 인프라를 구성합니다. 예를 들어 VPC, ALB, Route53, ACM 모듈을 연결합니다.
+```hcl
+output "certificate_arn" {
+  description = "생성된 ACM 인증서 ARN"
+  value       = aws_acm_certificate.cert.arn
+}
+
+output "validation_status" {
+  description = "ACM 인증서 검증 상태"
+  value       = aws_acm_certificate_validation.cert_validation.id
+}
+```
+
+`modules/acm/variables.tf`:
+
+```hcl
+variable "domain_name" {
+  description = "인증서에 사용할 기본 도메인 이름"
+  type        = string
+}
+
+variable "route53_zone_id" {
+  description = "Route53 호스팅 존 ID"
+  type        = string
+}
+
+variable "alternative_names" {
+  description = "추가로 인증할 서브 도메인들 (예: *.example.com)"
+  type        = list(string)
+  default     = []
+}
+
+variable "aws_region" {
+  description = "AWS 리전"
+  type        = string
+}
+```
+
+ACM 을 생성하면 CNAME을 Route53에 등록하고 검증하는 단계를 거치기 때문에 시간이 조금 더 걸립니다.
+살짝 조심해야할게 와일드카드가 포함된 도메인까지 인증서가 발급되는데 2개의 CNAME이 생성됩니다. 
+2개를 모두 CNAME 레코드로 등록 하면 좋겠지만 동일한 value 값으로 나오기 때문에 그중 한개만 등록하지 않으면 오류가 발생합니다.
+
+이제 루트모듈에 적용하겠습니다.
 
 `main.tf`:
 
 ```hcl
-module "dev_vpc" {
-  source          = "./modules/vpc"
-  vpc_name        = "${var.project_name}-dev"
-  vpc_cidr_block  = "10.0.0.0/16"
-  public_subnets  = var.public_subnets
-  private_subnets = var.private_subnets
-}
-
-module "prod_alb" {
-  source            = "./modules/alb"
-  alb_name          = "${var.project_name}-prod-alb"
-  vpc_id            = module.dev_vpc.vpc_id
-  public_subnet_ids = module.dev_vpc.public_subnet_ids
-}
-
-module "route53" {
-  source       = "./modules/route53"
-  domain_name  = var.domain_name
-  alb_dns_name = module.prod_alb.dns_name
-  alb_zone_id  = module.prod_alb.zone_id
+# SSL 보안 인증서 
+module "acm" {
+  source            = "./modules/acm"
+  domain_name       = var.domain_name
+  aws_region        = var.aws_region
+  route53_zone_id   = module.route53.public_hosted_zone_id
+  alternative_names = ["*.${var.domain_name}"]
 }
 ```
 
-### 8. 변수 설정
+위에서 반복된 init,plan,apply 삼형제 실행해주시면 되겠습니다.
 
-`variables.tf`를 사용해 재사용 가능한 변수들을 설정합니다.
-
-`variables.tf`:
-
-```hcl
-variable "project_name" {
-  description = "프로젝트 이름"
-  type        = string
-}
-
-variable "domain_name" {
-  description = "Route53 도메인 이름"
-  type        = string
-}
-
-variable "public_subnets" {
-  description = "퍼블릭 서브넷 목록"
-  type = list(object({
-    cidr_block        = string
-    availability_zone = string
-  }))
-}
-```
 
 ### 결론
 
-이번 글에서는 AWS 인프라를 Terraform으로 모듈화하여 VPC, ALB, Route53, ACM을 설정하는 방법을 다뤘습니다. 모듈화를 통해 코드의 재사용성을 높이고, 각 구성 요소를 독립적으로 관리함으로써 유지보수를 쉽게 할 수 있습니다. 이를 블로그에 올려서 많은 분들이 모듈화된 인프라 구성을 손쉽게 따라해볼 수 있도록 해보세요.
+이번 글에서는 AWS 인프라를 Terraform으로 모듈화하여 VPC, ALB, Route53, ACM을 설정하는 방법을 다뤘습니다. 모듈화를 통해 코드의 재사용성을 높이고, 각 구성 요소를 독립적으로 관리함으로써 유지보수를 쉽게 할 수 있습니다. 
 
-이후 더 궁금한 점이나 추가적인 도움이 필요하면 언제든지 말씀해주세요!
+이렇게 구성을 하려고 한 이유는 
 
